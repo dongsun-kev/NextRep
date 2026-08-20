@@ -39,10 +39,12 @@ enum InterruptionReason: String, Codable {
 
 @Model
 final class Routine {
+    @Attribute(.unique)
     var id: UUID
     var name: String
     var createdAt: Date
 
+    @Relationship(deleteRule: .cascade)
     var exercises: [RoutineExercise]
 
     init(
@@ -107,9 +109,20 @@ final class WorkoutSession {
     var completionStatus: SessionCompletionStatus
     var interruptionReason: InterruptionReason?
 
+    /// AMRAP review에서 사용자가 입력한
+    /// 마지막 미완성 라운드의 누적 반복 수
+    /// 일반 루틴 세션에서는 nil
+    var additionalReps: Int?
+
+    /// 운동 시작 시점의 루틴/챌린지 이름
+    var routineNameSnapshot: String?
+
     var sourceRoutine: Routine?
 
+    @Relationship(deleteRule: .cascade)
     var setRecords: [ExerciseSetRecord]
+
+    @Relationship(deleteRule: .cascade)
     var amrapRoundRecords: [AMRAPRoundRecord]
 
     init(
@@ -119,6 +132,8 @@ final class WorkoutSession {
         mode: SessionMode,
         completionStatus: SessionCompletionStatus = .inProgress,
         interruptionReason: InterruptionReason? = nil,
+        additionalReps: Int? = nil,
+        routineNameSnapshot: String? = nil,
         sourceRoutine: Routine? = nil,
         setRecords: [ExerciseSetRecord] = [],
         amrapRoundRecords: [AMRAPRoundRecord] = []
@@ -129,6 +144,8 @@ final class WorkoutSession {
         self.mode = mode
         self.completionStatus = completionStatus
         self.interruptionReason = interruptionReason
+        self.additionalReps = additionalReps
+        self.routineNameSnapshot = routineNameSnapshot
         self.sourceRoutine = sourceRoutine
         self.setRecords = setRecords
         self.amrapRoundRecords = amrapRoundRecords
@@ -141,6 +158,9 @@ final class WorkoutSession {
 @Model
 final class ExerciseSetRecord {
     var id: UUID
+
+    /// 동일한 운동 종류가 루틴에 여러 번 있을 때를 위한 원본 항목 ID
+    var routineExerciseID: UUID?
 
     var exerciseType: ExerciseType
     var setNumber: Int
@@ -158,6 +178,7 @@ final class ExerciseSetRecord {
 
     init(
         id: UUID = UUID(),
+        routineExerciseID: UUID? = nil,
         exerciseType: ExerciseType,
         setNumber: Int,
         plannedReps: Int,
@@ -166,6 +187,7 @@ final class ExerciseSetRecord {
         completedAt: Date = .now
     ) {
         self.id = id
+        self.routineExerciseID = routineExerciseID
         self.exerciseType = exerciseType
         self.setNumber = setNumber
         self.plannedReps = plannedReps

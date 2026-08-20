@@ -4,10 +4,9 @@
 //
 //  Created by DS on 8/19/26.
 //
-import SwiftUI
-import Observation
 
-// MARK: - TimeInterval Formatting Extension
+import SwiftUI
+import SwiftData
 
 extension TimeInterval {
     var formattedTime: String {
@@ -26,41 +25,68 @@ extension ExerciseType {
         case .squat: return "스쿼트"
         }
     }
-}
 
-// MARK: - Main WorkoutView
+    var symbolName: String {
+        switch self {
+        case .pushUp: return "figure.strengthtraining.traditional"
+        case .pullUp: return "figure.climbing"
+        case .squat: return "figure.strengthtraining.functional"
+        }
+    }
+}
 
 struct WorkoutView: View {
     @StateObject private var viewModel: WorkoutViewModel
+    @State private var isShowingInterruptionOptions = false
 
-    init(routine: Routine) {
+    init(
+        routine: Routine,
+        modelContext: ModelContext
+    ) {
         _viewModel = StateObject(
-            wrappedValue: WorkoutViewModel(routine: routine)
+            wrappedValue: WorkoutViewModel(
+                routine: routine,
+                modelContext: modelContext
+            )
         )
     }
 
     var body: some View {
-        VStack(spacing: 24) {
-            Text("현재 상태: \(stateText)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        content
+            .navigationTitle(viewModel.routine.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(
+                viewModel.state == .exercising ||
+                    viewModel.state == .sessionReview
+            )
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if viewModel.state == .exercising ||
+                        viewModel.state == .sessionReview {
+                        Button("중단", role: .destructive) {
+                            isShowingInterruptionOptions = true
+                        }
+                        .foregroundStyle(.red)
+                    }
+                }
+            }
+            .confirmationDialog(
+                "운동을 중단할까요?",
+                isPresented: $isShowingInterruptionOptions,
+                titleVisibility: .visible
+            ) {
+                Button("통증으로 중단", role: .destructive) {
+                    viewModel.interruptWorkout(reason: .pain)
+                }
 
-            Spacer()
+                Button("그만하기", role: .destructive) {
+                    viewModel.interruptWorkout(reason: .userQuit)
+                }
 
-            content
-
-            Spacer()
-
-            interruptButton
-        }
-        .padding()
-        .onDisappear {
-            viewModel.cleanup()
-        }
+                Button("취소", role: .cancel) {}
+            }
     }
 }
-
-// MARK: - State UI Routing
 
 private extension WorkoutView {
     @ViewBuilder
@@ -70,12 +96,6 @@ private extension WorkoutView {
             readyView
         case .exercising:
             exercisingView
-        case .setCompleted:
-            setCompletedView
-        case .resting:
-            restingView
-        case .exerciseCompleted:
-            exerciseCompletedView
         case .sessionReview:
             sessionReviewView
         case .completed:
@@ -84,231 +104,241 @@ private extension WorkoutView {
             interruptedView
         }
     }
-}
 
-// MARK: - Subviews
-
-private extension WorkoutView {
     var readyView: some View {
-        VStack(spacing: 20) {
-            Text(viewModel.routine.name)
-                .font(.largeTitle.bold())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("오늘의 루틴")
+                        .font(.largeTitle.bold())
 
-            VStack(alignment: .leading, spacing: 12) {
-                ForEach(
-                    viewModel.routine.exercises.sorted { $0.orderIndex < $1.orderIndex },
-                    id: \RoutineExercise.id
-                ) { exercise in
-                    HStack {
-                        Text(exercise.exerciseType.title)
-                        Spacer()
-                        Text("\(exercise.targetSets)세트 × \(exercise.targetReps)회")
-                            .foregroundStyle(.secondary)
+                    Text("운동은 원하는 순서로 진행할 수 있어요.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 16) {
+                    ForEach(viewModel.exercises, id: \RoutineExercise.id) { exercise in
+                        HStack(spacing: 16) {
+                            Image(systemName: exercise.exerciseType.symbolName)
+                                .font(.title2)
+                                .foregroundStyle(.tint)
+                                .frame(width: 44, height: 44)
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(exercise.exerciseType.title)
+                                    .font(.headline)
+
+                                Text("\(exercise.targetSets)세트 · 세트당 \(exercise.targetReps)회")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(16)
+                        .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
                     }
                 }
-            }
 
-            Button("운동 시작") {
-                viewModel.startWorkout()
+                Button {
+                    viewModel.startWorkout()
+                } label: {
+                    Text("운동 시작")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(viewModel.exercises.isEmpty || viewModel.totalTargetSets == 0)
             }
-            .buttonStyle(.borderedProminent)
+            .padding(16)
         }
     }
 
     var exercisingView: some View {
-        VStack(spacing: 24) {
-            if let exercise = viewModel.currentExercise {
-                Text(exercise.exerciseType.title)
-                    .font(.largeTitle.bold())
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                progressHeader
 
-                Text("Set \(viewModel.currentSetNumber) / \(exercise.targetSets)")
+                if let restNotice = viewModel.restNotice {
+                    restNoticeCard(restNotice)
+                }
+
+                VStack(spacing: 16) {
+                    ForEach(viewModel.exercises, id: \RoutineExercise.id) { exercise in
+                        exerciseProgressRow(exercise)
+                    }
+                }
+            }
+            .padding(16)
+        }
+    }
+
+    var progressHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("세트 진행")
+                    .font(.title.bold())
+
+                Spacer()
+
+                Text(viewModel.elapsedSessionTime.formattedTime)
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            ProgressView(value: viewModel.progress)
+                .tint(.accentColor)
+
+            Text("\(viewModel.completedSets) / \(viewModel.totalTargetSets)세트")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    func restNoticeCard(_ notice: RoutineRestNotice) -> some View {
+        GroupBox {
+            HStack(spacing: 16) {
+                Image(systemName: "timer")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                    .frame(width: 44, height: 44)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(notice.exerciseTitle) 휴식")
+                        .font(.headline)
+
+                    Text("\(viewModel.remainingRestTime.formattedTime) 동안 휴식하세요.")
+                        .font(.body.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("건너뛰기") {
+                    viewModel.dismissRestNotice()
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    func exerciseProgressRow(_ exercise: RoutineExercise) -> some View {
+        let completed = viewModel.completedSetCount(for: exercise)
+        let isCompleted = completed >= exercise.targetSets
+
+        return HStack(spacing: 16) {
+            Image(systemName: isCompleted ? "checkmark.circle.fill" : exercise.exerciseType.symbolName)
+                .font(.title2)
+                .foregroundStyle(isCompleted ? Color.accentColor : Color.secondary)
+                .frame(width: 44, height: 44)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(exercise.exerciseType.title)
                     .font(.headline)
 
-                Text("목표 \(viewModel.plannedReps)회")
+                Text("목표 \(exercise.targetReps)회 · \(completed)/\(exercise.targetSets)세트")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
 
-                Text(viewModel.elapsedSetTime.formattedTime)
-                    .font(.title2.monospacedDigit())
-
-                Text("\(viewModel.currentReps)")
-                    .font(.system(size: 72, weight: .bold))
-                    .monospacedDigit()
-
-                HStack(spacing: 24) {
-                    Button {
-                        viewModel.decrementReps()
-                    } label: {
-                        Image(systemName: "minus")
-                            .frame(width: 50, height: 50)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        viewModel.incrementReps()
-                    } label: {
-                        Image(systemName: "plus")
-                            .frame(width: 50, height: 50)
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-
-                Button("세트 완료") {
-                    viewModel.completeSet()
-                }
-                .buttonStyle(.borderedProminent)
+                ProgressView(
+                    value: Double(completed),
+                    total: Double(max(1, exercise.targetSets))
+                )
+                .tint(.accentColor)
             }
-        }
-    }
 
-    var setCompletedView: some View {
-        VStack(spacing: 20) {
-            Text("세트 완료")
-                .font(.largeTitle.bold())
+            Spacer()
 
-            Text("\(viewModel.currentReps)회")
-                .font(.system(size: 56, weight: .bold))
+            if completed > 0 {
+                Button {
+                    viewModel.undoLastSet(for: exercise)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("마지막 세트 취소")
+            }
 
-            Text("수행 시간 \(viewModel.elapsedSetTime.formattedTime)")
-                .foregroundStyle(.secondary)
-
-            Button("계속") {
-                viewModel.continueAfterSet()
+            Button {
+                viewModel.completeNextSet(for: exercise)
+            } label: {
+                Image(systemName: "checkmark")
+                    .frame(minWidth: 44, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(isCompleted)
+            .accessibilityLabel("\(exercise.exerciseType.title) 다음 세트 완료")
         }
-    }
-
-    var restingView: some View {
-        VStack(spacing: 24) {
-            Text("휴식")
-                .font(.largeTitle.bold())
-
-            Text(viewModel.remainingRestTime.formattedTime)
-                .font(.system(size: 64, weight: .bold))
-                .monospacedDigit()
-
-            Text("다음 세트를 준비하세요")
-                .foregroundStyle(.secondary)
-
-            Button("휴식 건너뛰기") {
-                viewModel.skipRest()
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
-    var exerciseCompletedView: some View {
-        VStack(spacing: 20) {
-            if let exercise = viewModel.currentExercise {
-                Text("\(exercise.exerciseType.title) 완료")
-                    .font(.largeTitle.bold())
-            }
-
-            Button("다음 운동") {
-                viewModel.moveToNextExercise()
-            }
-            .buttonStyle(.borderedProminent)
-        }
+        .padding(16)
+        .background(.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
     }
 
     var sessionReviewView: some View {
-        VStack(spacing: 20) {
-            Text("운동 결과")
-                .font(.largeTitle.bold())
+        List {
+            Section {
+                LabeledContent("날짜", value: Date.now.formatted(date: .abbreviated, time: .omitted))
+                LabeledContent("완료 세트", value: "\(viewModel.completedSets)세트")
+                LabeledContent("운동 시간", value: viewModel.elapsedSessionTime.formattedTime)
+            } header: {
+                Text("오늘 운동 기록")
+            }
 
-            if let session = viewModel.workoutSession {
-                List(session.setRecords, id: \ExerciseSetRecord.id) { record in
-                    VStack(alignment: .leading) {
-                        Text(record.exerciseType.title)
-                            .font(.headline)
-                        Text("Set \(record.setNumber)")
-                        Text("목표 \(record.plannedReps) / 실제 \(record.actualReps)")
-                        Text(record.duration.formattedTime)
+            Section("운동별 결과") {
+                ForEach(viewModel.exercises, id: \RoutineExercise.id) { exercise in
+                    LabeledContent {
+                        Text("\(viewModel.completedSetCount(for: exercise))세트 · 세트당 \(exercise.targetReps)회")
                             .foregroundStyle(.secondary)
+                    } label: {
+                        Label(exercise.exerciseType.title, systemImage: exercise.exerciseType.symbolName)
                     }
                 }
-                .frame(height: 300)
             }
 
-            Button("운동 완료") {
-                viewModel.completeWorkout()
+            Section {
+                Button {
+                    viewModel.completeWorkout()
+                } label: {
+                    Text("오늘 운동 저장")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button("세트 기록 수정") {
+                    viewModel.editCompletedSets()
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
             }
-            .buttonStyle(.borderedProminent)
         }
     }
 
     var completedView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64))
-                .foregroundColor(.green)
-
-            Text("운동 완료")
-                .font(.largeTitle.bold())
-
-            Text("오늘 운동이 기록되었습니다.")
-                .foregroundStyle(.secondary)
-        }
+        ContentUnavailableView(
+            "운동 완료",
+            systemImage: "checkmark.circle.fill",
+            description: Text("오늘 운동 기록을 저장했습니다.")
+        )
     }
 
     var interruptedView: some View {
-        VStack(spacing: 16) {
-            Text("운동 중단")
-                .font(.largeTitle.bold())
-                .foregroundColor(.red)
-
-            Text("완료된 세트 기록은 유지됩니다.")
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    @ViewBuilder
-    var interruptButton: some View {
-        if viewModel.state != .ready &&
-            viewModel.state != .completed &&
-            viewModel.state != .interrupted {
-            Button("운동 중단", role: .destructive) {
-                viewModel.interruptWorkout(reason: .userQuit)
-            }
-        }
-    }
-
-    var stateText: String {
-        switch viewModel.state {
-        case .ready: return "ready"
-        case .exercising: return "exercising"
-        case .setCompleted: return "setCompleted"
-        case .resting: return "resting"
-        case .exerciseCompleted: return "exerciseCompleted"
-        case .sessionReview: return "sessionReview"
-        case .completed: return "completed"
-        case .interrupted: return "interrupted"
-        }
+        ContentUnavailableView(
+            "운동 중단",
+            systemImage: "stop.circle",
+            description: Text("완료한 세트까지 저장했습니다.")
+        )
     }
 }
 
-// MARK: - Preview
-
 #Preview {
-    let routine = Routine(
-        name: "상체 기본 루틴",
-        exercises: [
-            RoutineExercise(
-                exerciseType: .pushUp,
-                orderIndex: 0,
-                targetSets: 2,
-                targetReps: 10,
-                targetRestDuration: 5 // 테스트용 5초 휴식
-            ),
-            RoutineExercise(
-                exerciseType: .pullUp,
-                orderIndex: 1,
-                targetSets: 2,
-                targetReps: 5,
-                targetRestDuration: 5
-            )
-        ]
-    )
-
-    WorkoutView(routine: routine)
+    ContentView()
+        .modelContainer(
+            for: [
+                Routine.self,
+                RoutineExercise.self,
+                WorkoutSession.self,
+                ExerciseSetRecord.self,
+                AMRAPRoundRecord.self
+            ],
+            inMemory: true
+        )
 }

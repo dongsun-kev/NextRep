@@ -12,9 +12,6 @@ import Foundation
 enum WorkoutFlowState: Equatable {
     case ready
     case exercising
-    case setCompleted
-    case resting
-    case exerciseCompleted
     case sessionReview
     case completed
     case interrupted

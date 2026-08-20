@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
 struct NextRepApp: App {
@@ -13,5 +14,14 @@ struct NextRepApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(
+            for: [
+                Routine.self,
+                RoutineExercise.self,
+                WorkoutSession.self,
+                ExerciseSetRecord.self,
+                AMRAPRoundRecord.self
+            ]
+        )
     }
 }
